@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
+import time
 import shift
 import numpy as np
 import datetime
 import sys
+from math import exp
 
 # Trader ----------------------------------------------------------------------
 
@@ -12,6 +14,7 @@ class Trader(ABC):
         self._trader = shift.Trader(username)
         self._orders = []
         self._next_trade_time = None
+        self._available_bp = 0
         self._risk_tolerance = 0
 
         if self._verbose:
@@ -28,18 +31,30 @@ class Trader(ABC):
             print(e)
             sys.exit(1)
 
+    def _get_trade_size(self, stock: str, typ: shift.Order.Type):
+        if typ == shift.Order.Type.MARKET_BUY:
+            best_price = self._trader.get_best_price(stock).get_ask_price()
+        else:
+            best_price = self._trader.get_best_price(stock).get_bid_price()
 
-    @abstractmethod
-    def _get_trade_size(self, stock: str, typ: shift.Order.Type) -> int:
-        pass
+        mean = np.log(self._available_bp / 2)
+        sd = np.log(self._available_bp / 100)
+        cost = exp(np.random.normal(mean, sd))
 
+        if self._verbose:
+            print(f"Mean: {mean}\nSD: {sd}\nCost: {cost}")
 
-    def _get_next_trade_time(self, lower: int, upper: int):
+        self._available_bp -= cost
+
+        return int(cost / best_price / 100)
+
+    def _get_next_trade_time(self, lower: int, upper: int, minutes: bool):
         while self._trader.get_last_trade_time().year == 1969:
             pass
 
-        minutes = np.random.randint(lower, upper)
-        self._next_trade_time = self._trader.get_last_trade_time() + datetime.timedelta(minutes=minutes)
+        n = np.random.randint(lower, upper)
+        delta = datetime.timedelta(minutes=n) if minutes else datetime.timedelta(seconds=n)
+        self._next_trade_time = self._trader.get_last_trade_time() + delta
 
         if self._verbose:
             print(f"{self.__username}'s next trade time is: {self._next_trade_time}")
@@ -60,50 +75,38 @@ class Trader(ABC):
         order = shift.Order(typ, stock, self._get_trade_size(stock, typ))
         self._orders.append(order)
         self._trader.submit_order(order)
+        time.sleep(1)
+
+        if self._verbose:
+            print(f"BP: {self._trader.get_portfolio_summary().get_total_bp()}")
 
 # Small Trader ----------------------------------------------------------------
 
 class SmallTrader(Trader):
-    __bounds = (1, 2) # Lower and upper bound for _next_trade_time
-
+    __bounds = (10, 420) # Lower and upper bound for _next_trade_time Minutes
 
     def __init__(self, username: str, password: str, verbose: bool):
         Trader.__init__(self, username, password, verbose)
-        self.__available_bp = np.random.randint(10000, 200000)
-        self._get_next_trade_time(*SmallTrader.__bounds)
+        self._available_bp = np.random.randint(10000, 200000)
+        self._get_next_trade_time(*SmallTrader.__bounds, True)
 
-
-    def _get_trade_size(self, stock: str, typ: shift.Order.Type):
-        if typ == shift.Order.Type.MARKET_BUY:
-            best_price = self._trader.get_best_price(stock).get_ask_price()
-        else:
-            best_price = self._trader.get_best_price(stock).get_bid_price()
-
-        print(best_price)
-        mean = self.__available_bp / 2
-        sd = self.__available_bp / 20
-        cost = np.random.lognormal(mean, sd)
-        print(cost)
-
-        self.__available_bp -= cost
-
-        return int(cost / best_price / 100)
+    def execute_trade(self):
+        Trader.execute_trade(self)
+        self._get_next_trade_time(*SmallTrader.__bounds, True)
 
 # High-Frequency Trader -------------------------------------------------------
 
-"""
 class HighFrequencyTrader(Trader):
-    __bounds = (0, 1) # Lower and upper bound for _next_trade_time
-
+    __bounds = (0, 300) # Lower and upper bound for _next_trade_time. Seconds
 
     def __init__(self, username: str, password: str, verbose: bool):
         Trader.__init__(self, username, password, verbose)
-        self.__available_bp = 1000000
-        self._get_next_trade_time(*HighFrequencyTrader.__bounds)
+        self._available_bp = 1000000
+        self._get_next_trade_time(*HighFrequencyTrader.__bounds, False)
 
+    def execute_trade(self):
+        Trader.execute_trade(self)
+        self._get_next_trade_time(*HighFrequencyTrader.__bounds, False)
 
 # Market-Maker ----------------------------------------------------------------
 
-class MarketMaker(Trader):
-    pass
-"""
